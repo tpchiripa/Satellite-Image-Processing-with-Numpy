@@ -1,0 +1,33 @@
+# --- Core (Milestone 0-1) ---
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.8
+imageio>=2.34
+
+# --- Testing (Milestone 0) ---
+pytest>=8.0
+
+# --- Remote sensing / geospatial (Milestone 1-3) ---
+rasterio>=1.3
+geopandas>=0.14
+shapely>=2.0
+
+# --- Data access (Milestone 3) ---
+requests>=2.31
+
+# --- Database (Milestone 3+, Postgres/PostGIS from the start per project decision) ---
+sqlalchemy>=2.0
+geoalchemy2>=0.14
+psycopg2-binary>=2.9
+
+# --- Visualization / dashboard (Milestone 4) ---
+plotly>=5.20
+folium>=0.16
+streamlit>=1.33
+
+# --- Machine learning (roadmap, Phase 11) ---
+scikit-learn>=1.4
+
+# --- API layer (roadmap) ---
+fastapi>=0.110
+uvicorn>=0.29

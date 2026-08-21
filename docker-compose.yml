@@ -1,0 +1,35 @@
+# GeoWatch local development stack.
+#
+# Milestone 0: only the `db` service (PostgreSQL + PostGIS) is meaningful
+# right now, per the project decision to stand up Postgres/PostGIS from
+# the start. The `app` service builds and runs tests; it will run the
+# Streamlit dashboard starting Milestone 4 and will not need real DB
+# reads/writes until Milestone 3.
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: geowatch_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: geowatch
+      POSTGRES_PASSWORD: geowatch
+      POSTGRES_DB: geowatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - geowatch_pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: geowatch_app
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://geowatch:geowatch@db:5432/geowatch
+    volumes:
+      - .:/app
+    # Milestone 4+: ports: ["8501:8501"] once the Streamlit dashboard exists.
+
+volumes:
+  geowatch_pgdata:

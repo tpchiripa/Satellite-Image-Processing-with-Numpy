@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Data (raw/processed imagery should not be committed; samples/ small reference files are fine)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Model artifacts
+models/*.pkl
+models/*.joblib
+
+# Outputs
+outputs/*
+!outputs/.gitkeep
+
+# Environment / secrets
+.env
+*.env.local
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
