@@ -48,8 +48,8 @@ a real, runnable checkpoint before the next one starts.
 |---|---|---|
 | 0 | Repo restructure, project skeleton, evidence-level types, test harness | done |
 | 1 | Spectral index engine: NDVI, NBR, dNBR (deterministic, unit-tested) | done |
-| 2 | Wildfire detection on sample imagery: burned-area mask, severity | next |
-| 3 | NASA FIRMS live ingestion + PostGIS-backed event store + map | planned |
+| 2 | Wildfire detection: burned-area mask, configurable severity, affected area | done |
+| 3 | NASA FIRMS live ingestion + PostGIS-backed event store + map | next |
 | 4 | Streamlit dashboard (Overview, Live Map, Fire Monitor) | planned |
 | 5 | Basic automated intelligence report (JSON export) | planned |
 
@@ -65,6 +65,7 @@ data/                   raw / processed / sample imagery (not committed; see .gi
 notebooks/
     01_image_processing.ipynb   Phase 1 — original NumPy foundation
     02_ndvi.ipynb                Phase 2 — NDVI/NBR/dNBR spectral engine demo
+    03_wildfire_detection.ipynb  Phase 3 — burned-area + severity detection demo
 src/
     types.py             EvidenceLevel, GeoWatchEvent, ConfidenceScore — shared contracts
     ingestion/           SatelliteDataProvider abstraction + provider implementations
