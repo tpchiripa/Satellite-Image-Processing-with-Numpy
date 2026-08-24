@@ -1,10 +1,13 @@
 # GeoWatch local development stack.
 #
-# Milestone 0: only the `db` service (PostgreSQL + PostGIS) is meaningful
-# right now, per the project decision to stand up Postgres/PostGIS from
-# the start. The `app` service builds and runs tests; it will run the
-# Streamlit dashboard starting Milestone 4 and will not need real DB
-# reads/writes until Milestone 3.
+# The `db` service (PostgreSQL + PostGIS) is used from Milestone 3 onward
+# by PostgresEventStore (src/monitoring/postgres_store.py). To run the
+# PostGIS-backed integration tests locally:
+#     docker compose up -d db
+#     TEST_DATABASE_URL=postgresql://geowatch:geowatch@localhost:5432/geowatch \
+#         pytest tests/test_postgres_store.py -v
+# The `app` service builds and runs tests; it will run the Streamlit
+# dashboard starting Milestone 4.
 
 services:
   db:

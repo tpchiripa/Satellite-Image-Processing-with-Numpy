@@ -20,7 +20,7 @@ sqlalchemy>=2.0
 geoalchemy2>=0.14
 psycopg2-binary>=2.9
 
-# --- Visualization / dashboard (Milestone 4) ---
+# --- Visualization / dashboard (Milestone 3-4) ---
 plotly>=5.20
 folium>=0.16
 streamlit>=1.33
