@@ -4,7 +4,7 @@
 # by PostgresEventStore (src/monitoring/postgres_store.py). To run the
 # PostGIS-backed integration tests locally:
 #     docker compose up -d db
-#     TEST_DATABASE_URL=postgresql://geowatch:geowatch@localhost:5432/geowatch \
+#     TEST_DATABASE_URL=postgresql://geowatch:geowatch@localhost:5439/geowatch \
 #         pytest tests/test_postgres_store.py -v
 # The `app` service builds and runs tests; it will run the Streamlit
 # dashboard starting Milestone 4.
@@ -19,7 +19,12 @@ services:
       POSTGRES_PASSWORD: geowatch
       POSTGRES_DB: geowatch
     ports:
-      - "5432:5432"
+      # Host port 5439, not the default 5432 -- deliberately picked to
+      # avoid colliding with other local Postgres containers from
+      # unrelated projects that commonly claim 5432-5435 or 5444.
+      # Change the left-hand side if 5439 is also taken on your machine;
+      # the container's own internal port (5432) does not need to change.
+      - "5439:5432"
     volumes:
       - geowatch_pgdata:/var/lib/postgresql/data
 

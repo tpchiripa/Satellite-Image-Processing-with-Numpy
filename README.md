@@ -132,7 +132,7 @@ Milestone 3 notebook's persistence step):
 
 ```bash
 docker compose up -d db
-TEST_DATABASE_URL=postgresql://geowatch:geowatch@localhost:5432/geowatch pytest tests/test_postgres_store.py -v
+TEST_DATABASE_URL=postgresql://geowatch:geowatch@localhost:5439/geowatch pytest tests/test_postgres_store.py -v
 ```
 
 **NASA FIRMS MAP_KEY** (optional — enables live fire data instead of the
