@@ -38,7 +38,7 @@ mining-related land disturbance,"* never as a confirmed illegal
 activity. This distinction is enforced in code via the `EvidenceLevel`
 type in [`src/types.py`](src/types.py), not just described in prose.
 
-## Current status: Milestone 3 complete
+## Current status: Milestone 4 complete
 
 This repository is being built one working, tested milestone at a
 time. **Nothing here is skipped or faked** — each milestone below is
@@ -50,8 +50,8 @@ a real, runnable checkpoint before the next one starts.
 | 1 | Spectral index engine: NDVI, NBR, dNBR (deterministic, unit-tested) | done |
 | 2 | Wildfire detection: burned-area mask, configurable severity, affected area | done |
 | 3 | NASA FIRMS live ingestion, PostGIS-backed event store, interactive map | done |
-| 4 | Streamlit dashboard (Overview, Live Map, Fire Monitor) | next |
-| 5 | Basic automated intelligence report (JSON export) | planned |
+| 4 | Streamlit dashboard (Overview, Live Map, Fire Monitor) | done |
+| 5 | Basic automated intelligence report (JSON export) | next |
 
 Everything beyond Milestone 5 — Sentinel-1/SAR, machine learning,
 time-series recovery tracking, an AI explainer layer, event streaming —
@@ -148,6 +148,17 @@ export FIRMS_MAP_KEY="your-key-here"
 
 Never commit a MAP_KEY to git or paste it into a chat — treat it like
 any other API credential.
+
+**Run the dashboard:**
+
+```bash
+streamlit run app/dashboard.py
+```
+
+Works with zero configuration (falls back to an in-memory store and an
+empty state with setup instructions), but is more useful with both
+`DATABASE_URL` and `FIRMS_MAP_KEY` set — persistence plus live fire
+data. Three tabs: Overview, Live Event Map, Fire Monitor.
 
 ## Responsible use
 
