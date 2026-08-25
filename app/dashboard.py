@@ -31,7 +31,16 @@ Environment variables (see .env.example):
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+# `streamlit run app/dashboard.py` puts only this file's own directory
+# (app/) on sys.path, not the repo root -- so `from src...` below would
+# fail with ModuleNotFoundError regardless of the working directory the
+# command is run from. This mirrors what conftest.py does for pytest,
+# which doesn't apply here since Streamlit doesn't use conftest.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
