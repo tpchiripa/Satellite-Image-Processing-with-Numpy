@@ -49,6 +49,7 @@ from src.geospatial.aoi import AOI
 from src.ingestion.firms import FIRMSError, FIRMSProvider
 from src.monitoring.events import InMemoryEventStore
 from src.monitoring.map_view import build_event_map
+from src.reporting.reports import generate_intelligence_report
 from src.types import EventType, GeoWatchEvent
 
 DEFAULT_AOI = AOI(label="Southern Africa (default AOI)", west=10.0, south=-35.0, east=40.0, north=-10.0)
@@ -166,6 +167,47 @@ def render_overview_tab(store, db_connected: bool) -> None:
             "No events stored yet. Go to the **Fire Monitor** tab and click "
             "**Fetch latest fire data** to pull observations from NASA FIRMS."
         )
+
+    st.divider()
+    st.subheader("Intelligence report")
+    st.caption(
+        "Summarizes all currently stored events — counts, confidence, evidence "
+        "levels — with limitations text generated from the actual data included, "
+        "not a fixed disclaimer. See src/reporting/reports.py."
+    )
+
+    if not events:
+        st.info("Generate a report once at least one event is stored.")
+        return
+
+    report = generate_intelligence_report(
+        aoi=DEFAULT_AOI,
+        period_start=min(e.observation_time or e.detected_at for e in events),
+        period_end=max(e.observation_time or e.detected_at for e in events),
+        events=events,
+    )
+
+    col1, col2 = st.columns(2)
+    col1.metric("Report covers", f"{report.total_events} event(s)")
+    col2.metric("Average confidence", f"{report.average_confidence:.2f}" if report.average_confidence else "—")
+
+    with st.expander("Limitations (always shown alongside any figures above)"):
+        for limitation in report.limitations:
+            st.caption(f"• {limitation}")
+
+    dl_col1, dl_col2 = st.columns(2)
+    dl_col1.download_button(
+        "Download report (JSON)",
+        data=report.to_json(),
+        file_name=f"geowatch_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.json",
+        mime="application/json",
+    )
+    dl_col2.download_button(
+        "Download event table (CSV)",
+        data=report.to_csv(),
+        file_name=f"geowatch_events_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+    )
 
 
 def render_live_map_tab(store) -> None:

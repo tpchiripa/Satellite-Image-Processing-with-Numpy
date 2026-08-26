@@ -38,7 +38,7 @@ mining-related land disturbance,"* never as a confirmed illegal
 activity. This distinction is enforced in code via the `EvidenceLevel`
 type in [`src/types.py`](src/types.py), not just described in prose.
 
-## Current status: Milestone 4 complete
+## Current status: MVP complete (Milestones 0-5)
 
 This repository is being built one working, tested milestone at a
 time. **Nothing here is skipped or faked** — each milestone below is
@@ -51,7 +51,9 @@ a real, runnable checkpoint before the next one starts.
 | 2 | Wildfire detection: burned-area mask, configurable severity, affected area | done |
 | 3 | NASA FIRMS live ingestion, PostGIS-backed event store, interactive map | done |
 | 4 | Streamlit dashboard (Overview, Live Map, Fire Monitor) | done |
-| 5 | Basic automated intelligence report (JSON export) | next |
+| 5 | Automated intelligence report (JSON + CSV export) | done |
+
+**The original Milestone 0-5 MVP is now complete.** Everything below is roadmap.
 
 Everything beyond Milestone 5 — Sentinel-1/SAR, machine learning,
 time-series recovery tracking, an AI explainer layer, event streaming —
@@ -67,6 +69,7 @@ notebooks/
     02_ndvi.ipynb                  Phase 2 — NDVI/NBR/dNBR spectral engine demo
     03_wildfire_detection.ipynb    Phase 3 — burned-area + severity detection demo
     04_live_fire_monitoring.ipynb  Phase 4 — FIRMS ingestion + PostGIS + map demo
+    05_intelligence_report.ipynb   Phase 5 — automated report generation demo
 src/
     types.py             EvidenceLevel, GeoWatchEvent, ConfidenceScore — shared contracts
     ingestion/           SatelliteDataProvider abstraction; firms.py is the first real provider
@@ -78,7 +81,7 @@ src/
     monitoring/          events.py (EventStore interface + in-memory store),
                           postgres_store.py (real PostGIS-backed store),
                           map_view.py (Folium event map), time-series tracking
-    reporting/           intelligence report generation
+    reporting/           automated intelligence reports (JSON/CSV export), reports.py
     ai/                  optional AI explanation layer (roadmap)
 app/
     dashboard.py         Streamlit dashboard entry point
