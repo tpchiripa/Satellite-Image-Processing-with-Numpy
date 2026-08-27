@@ -49,6 +49,7 @@ from src.geospatial.aoi import AOI
 from src.ingestion.firms import FIRMSError, FIRMSProvider
 from src.monitoring.events import InMemoryEventStore
 from src.monitoring.map_view import build_event_map
+from src.monitoring.timeseries import TrendDirection, analyze_event_time_series
 from src.reporting.reports import generate_intelligence_report
 from src.types import EventType, GeoWatchEvent
 
@@ -303,6 +304,39 @@ def render_fire_monitor_tab(store) -> None:
 
     avg_confidence = sum(e.confidence.value for e in wildfire_events) / len(wildfire_events)
     st.caption(f"Average confidence across stored observations: {avg_confidence:.2f}")
+
+    st.divider()
+    st.subheader("Activity over time")
+    st.caption(
+        "Daily detection counts from stored observations. Trend direction is a "
+        "simple heuristic (comparing the first half of the period to the second), "
+        "not a statistical test — see src/monitoring/timeseries.py."
+    )
+
+    obs_times = [e.observation_time or e.detected_at for e in wildfire_events]
+    period_start = min(obs_times)
+    period_end = max(obs_times) + timedelta(days=1)  # inclusive of the last observation's day
+
+    ts_summary = analyze_event_time_series(wildfire_events, period_start, period_end, bucket_days=1)
+
+    if len(ts_summary.points) >= 2:
+        chart_data = {
+            p.period_start.strftime("%Y-%m-%d"): p.event_count for p in ts_summary.points
+        }
+        st.bar_chart(chart_data)
+
+        trend_labels = {
+            TrendDirection.INCREASING: "📈 Increasing",
+            TrendDirection.DECREASING: "📉 Decreasing",
+            TrendDirection.STABLE: "➡️ Stable",
+            TrendDirection.INSUFFICIENT_DATA: "Not enough data for a trend (need 4+ days)",
+        }
+        st.caption(
+            f"Trend: {trend_labels[ts_summary.trend_direction]} "
+            f"— based on {len(ts_summary.points)} day(s) of data."
+        )
+    else:
+        st.caption("All observations fall on a single day — nothing to chart yet.")
 
 
 # --- Entry point ---------------------------------------------------------

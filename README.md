@@ -38,7 +38,7 @@ mining-related land disturbance,"* never as a confirmed illegal
 activity. This distinction is enforced in code via the `EvidenceLevel`
 type in [`src/types.py`](src/types.py), not just described in prose.
 
-## Current status: MVP complete (Milestones 0-5) + vegetation decline engine
+## Current status: MVP complete (Milestones 0-5) + vegetation decline engine + event time-series
 
 This repository is being built one working, tested milestone at a
 time. **Nothing here is skipped or faked** — each milestone below is
@@ -53,6 +53,7 @@ a real, runnable checkpoint before the next one starts.
 | 4 | Streamlit dashboard (Overview, Live Map, Fire Monitor) | done |
 | 5 | Automated intelligence report (JSON + CSV export) | done |
 | 6 (post-MVP) | Vegetation decline detection engine (dNDVI-based) | engine done, not yet in dashboard |
+| 7 (post-MVP) | Event time-series tracking (real FIRMS data, live in dashboard) | done |
 
 **The original Milestone 0-5 MVP is complete.** Post-MVP work has begun
 with a vegetation-change detection engine (`src/detection/vegetation.py`,
@@ -63,6 +64,15 @@ data. NASA FIRMS gives fire-hotspot points, not the raw spectral bands
 vegetation analysis needs. See
 [`notebooks/06_vegetation_decline.ipynb`](notebooks/06_vegetation_decline.ipynb)
 for a full demonstration against known synthetic ground truth.
+
+Unlike vegetation decline, **event time-series tracking is genuinely
+live** (`src/monitoring/timeseries.py`) — it aggregates real stored
+FIRMS events by day and shows a trend chart directly in the Fire
+Monitor tab, since GeoWatch already has real event data with real
+timestamps flowing through PostGIS. The trend label is an explicitly
+simple heuristic (first-half vs second-half mean comparison), not a
+statistical test — see the module docstring before treating it as more
+than a rough signal.
 
 Everything beyond this — Sentinel-1/SAR, a Sentinel-2 provider, machine
 learning, time-series recovery tracking, an AI explainer layer, event

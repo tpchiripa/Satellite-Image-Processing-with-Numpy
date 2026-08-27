@@ -159,3 +159,46 @@ class TestDashboardWithDatabase:
         assert not at.exception
         total_metric = next(m for m in at.metric if m.label == "Total events stored")
         assert total_metric.value == "1"
+
+    def test_time_series_chart_appears_with_multi_day_data(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABASE_URL", TEST_DB_URL)
+        monkeypatch.setenv("FIRMS_MAP_KEY", "fake-test-key")
+
+        multi_day_rows = [
+            {**SAMPLE_VIIRS_ROW, "latitude": "-16.10", "acq_date": "2025-06-01"},
+            {**SAMPLE_VIIRS_ROW, "latitude": "-16.20", "acq_date": "2025-06-03"},
+            {**SAMPLE_VIIRS_ROW, "latitude": "-16.30", "acq_date": "2025-06-05"},
+        ]
+
+        with patch(
+            "src.ingestion.firms.FIRMSProvider.search_observations",
+            return_value=multi_day_rows,
+        ):
+            at = AppTest.from_file(str(DASHBOARD_PATH))
+            at.run(timeout=30)
+            fetch_button = next(b for b in at.button if "Fetch latest fire data" in b.label)
+            fetch_button.click().run(timeout=30)
+
+        assert not at.exception
+        trend_captions = [c.value for c in at.caption if "Trend:" in c.value]
+        assert len(trend_captions) == 1
+        assert "day(s) of data" in trend_captions[0]
+
+    def test_single_day_data_shows_no_chart_message_not_a_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DATABASE_URL", TEST_DB_URL)
+        monkeypatch.setenv("FIRMS_MAP_KEY", "fake-test-key")
+
+        with patch(
+            "src.ingestion.firms.FIRMSProvider.search_observations",
+            return_value=[SAMPLE_VIIRS_ROW],
+        ):
+            at = AppTest.from_file(str(DASHBOARD_PATH))
+            at.run(timeout=30)
+            fetch_button = next(b for b in at.button if "Fetch latest fire data" in b.label)
+            fetch_button.click().run(timeout=30)
+
+        assert not at.exception
+        captions = [c.value for c in at.caption]
+        assert any("nothing to chart yet" in c for c in captions)
