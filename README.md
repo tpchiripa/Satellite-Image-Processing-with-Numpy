@@ -38,7 +38,7 @@ mining-related land disturbance,"* never as a confirmed illegal
 activity. This distinction is enforced in code via the `EvidenceLevel`
 type in [`src/types.py`](src/types.py), not just described in prose.
 
-## Current status: MVP complete (Milestones 0-5)
+## Current status: MVP complete (Milestones 0-5) + vegetation decline engine
 
 This repository is being built one working, tested milestone at a
 time. **Nothing here is skipped or faked** — each milestone below is
@@ -52,12 +52,21 @@ a real, runnable checkpoint before the next one starts.
 | 3 | NASA FIRMS live ingestion, PostGIS-backed event store, interactive map | done |
 | 4 | Streamlit dashboard (Overview, Live Map, Fire Monitor) | done |
 | 5 | Automated intelligence report (JSON + CSV export) | done |
+| 6 (post-MVP) | Vegetation decline detection engine (dNDVI-based) | engine done, not yet in dashboard |
 
-**The original Milestone 0-5 MVP is now complete.** Everything below is roadmap.
+**The original Milestone 0-5 MVP is complete.** Post-MVP work has begun
+with a vegetation-change detection engine (`src/detection/vegetation.py`,
+`compute_dndvi()`), built and fully tested the same way every wildfire
+module was — but **not yet surfaced in the dashboard**, since GeoWatch
+has no live optical-imagery provider (Sentinel-2/Landsat) to feed it real
+data. NASA FIRMS gives fire-hotspot points, not the raw spectral bands
+vegetation analysis needs. See
+[`notebooks/06_vegetation_decline.ipynb`](notebooks/06_vegetation_decline.ipynb)
+for a full demonstration against known synthetic ground truth.
 
-Everything beyond Milestone 5 — Sentinel-1/SAR, machine learning,
-time-series recovery tracking, an AI explainer layer, event streaming —
-is documented **roadmap**, not current functionality. See
+Everything beyond this — Sentinel-1/SAR, a Sentinel-2 provider, machine
+learning, time-series recovery tracking, an AI explainer layer, event
+streaming — is documented **roadmap**, not current functionality. See
 [Roadmap](#roadmap) below.
 
 ## Architecture
@@ -70,6 +79,7 @@ notebooks/
     03_wildfire_detection.ipynb    Phase 3 — burned-area + severity detection demo
     04_live_fire_monitoring.ipynb  Phase 4 — FIRMS ingestion + PostGIS + map demo
     05_intelligence_report.ipynb   Phase 5 — automated report generation demo
+    06_vegetation_decline.ipynb    Phase 7 — vegetation decline engine demo (post-MVP)
 src/
     types.py             EvidenceLevel, GeoWatchEvent, ConfidenceScore — shared contracts
     ingestion/           SatelliteDataProvider abstraction; firms.py is the first real provider

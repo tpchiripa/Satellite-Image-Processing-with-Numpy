@@ -214,3 +214,109 @@ class TestSerialization:
         report = generate_intelligence_report(DEFAULT_AOI, PERIOD_START, PERIOD_END, events)
         lines = [l for l in report.to_csv().strip().split("\n") if l]
         assert len(lines) == 6  # header + 5 rows
+
+
+class TestVegetationResultIntegration:
+    def test_no_vegetation_result_leaves_fields_none(self) -> None:
+        report = generate_intelligence_report(DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[])
+        assert report.mean_ndvi_change is None
+        assert report.vegetation_change_breakdown is None
+        assert report.vegetation_change_thresholds_used is None
+
+    def test_vegetation_result_does_not_require_pixel_resolution(self) -> None:
+        # Unlike wildfire_result, vegetation_result has no area-conversion step.
+        from src.detection.vegetation import analyze_vegetation_change
+
+        veg_result = analyze_vegetation_change(np.array([0.1, 0.2]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        assert report.vegetation_change_breakdown is not None
+
+    def test_mean_ndvi_change_included(self) -> None:
+        from src.detection.vegetation import analyze_vegetation_change
+
+        veg_result = analyze_vegetation_change(np.array([0.2, 0.4]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        assert report.mean_ndvi_change == pytest.approx(0.3)
+
+    def test_mean_ndvi_change_none_when_all_nan(self) -> None:
+        from src.detection.vegetation import analyze_vegetation_change
+
+        veg_result = analyze_vegetation_change(np.array([np.nan, np.nan]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        assert report.mean_ndvi_change is None
+
+    def test_vegetation_change_breakdown_included(self) -> None:
+        from src.detection.vegetation import analyze_vegetation_change
+
+        veg_result = analyze_vegetation_change(np.array([-0.2, 0.5]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        assert report.vegetation_change_breakdown["improvement"] == 1
+        assert report.vegetation_change_breakdown["severe_decline"] == 1
+
+    def test_custom_vegetation_thresholds_reflected(self) -> None:
+        from src.detection.vegetation import VegetationChangeThresholds, analyze_vegetation_change
+
+        custom = VegetationChangeThresholds(
+            improvement_max=-0.2, stable_max=0.0, slight_decline_max=0.1, moderate_decline_max=0.2
+        )
+        veg_result = analyze_vegetation_change(np.array([0.05]), thresholds=custom)
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        assert report.vegetation_change_thresholds_used["stable_max"] == 0.0
+
+    def test_limitations_mention_dndvi_thresholds_when_vegetation_result_present(self) -> None:
+        from src.detection.vegetation import analyze_vegetation_change
+
+        veg_result = analyze_vegetation_change(np.array([0.1]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        assert any("dNDVI thresholds" in lim for lim in report.limitations)
+
+    def test_scope_disclaimer_updates_when_vegetation_included(self) -> None:
+        from src.detection.vegetation import analyze_vegetation_change
+
+        veg_result = analyze_vegetation_change(np.array([0.1]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        scope_line = next(lim for lim in report.limitations if lim.startswith("This report covers"))
+        assert "vegetation-change analysis" in scope_line
+        assert "vegetation-decline" not in scope_line.split("does not yet implement")[1]
+
+    def test_both_wildfire_and_vegetation_results_together(self) -> None:
+        from src.detection.vegetation import analyze_vegetation_change
+        from src.detection.wildfire import detect_wildfire
+
+        wf_result = detect_wildfire(np.array([0.5]))
+        veg_result = analyze_vegetation_change(np.array([0.2]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI,
+            PERIOD_START,
+            PERIOD_END,
+            events=[],
+            wildfire_result=wf_result,
+            pixel_resolution_m=10.0,
+            vegetation_result=veg_result,
+        )
+        assert report.burned_area_hectares is not None
+        assert report.vegetation_change_breakdown is not None
+
+    def test_to_json_valid_with_vegetation_data(self) -> None:
+        from src.detection.vegetation import analyze_vegetation_change
+
+        veg_result = analyze_vegetation_change(np.array([0.1, np.nan]))
+        report = generate_intelligence_report(
+            DEFAULT_AOI, PERIOD_START, PERIOD_END, events=[], vegetation_result=veg_result
+        )
+        parsed = json.loads(report.to_json())
+        assert "vegetation_change_breakdown" in parsed

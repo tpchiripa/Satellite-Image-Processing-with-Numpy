@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.remote_sensing.ndvi import compute_ndvi
+from src.remote_sensing.ndvi import compute_dndvi, compute_ndvi
 
 
 class TestComputeNDVI:
@@ -59,3 +59,43 @@ class TestComputeNDVI:
         # Convenience: callers shouldn't be forced to pre-wrap in np.array.
         ndvi = compute_ndvi(nir=[0.5], red=[0.1])
         assert ndvi[0] == pytest.approx(2 / 3)
+
+
+class TestComputeDNDVI:
+    def test_known_decline_value(self) -> None:
+        # Baseline healthy (0.7), recent stressed (0.3) -> positive dNDVI = decline
+        dndvi = compute_dndvi(ndvi_pre=np.array([0.7]), ndvi_post=np.array([0.3]))
+        assert dndvi[0] == pytest.approx(0.4)
+
+    def test_no_change_gives_zero(self) -> None:
+        dndvi = compute_dndvi(ndvi_pre=np.array([0.5]), ndvi_post=np.array([0.5]))
+        assert dndvi[0] == pytest.approx(0.0)
+
+    def test_vegetation_increase_gives_negative_dndvi(self) -> None:
+        # Recent greener than baseline (e.g. regrowth/recovery) -> negative dNDVI
+        dndvi = compute_dndvi(ndvi_pre=np.array([0.2]), ndvi_post=np.array([0.6]))
+        assert dndvi[0] == pytest.approx(-0.4)
+
+    def test_nan_in_pre_propagates(self) -> None:
+        dndvi = compute_dndvi(np.array([np.nan]), np.array([0.3]))
+        assert np.isnan(dndvi[0])
+
+    def test_nan_in_post_propagates(self) -> None:
+        dndvi = compute_dndvi(np.array([0.3]), np.array([np.nan]))
+        assert np.isnan(dndvi[0])
+
+    def test_shape_mismatch_raises(self) -> None:
+        with pytest.raises(ValueError):
+            compute_dndvi(np.array([0.1, 0.2]), np.array([0.1]))
+
+    def test_end_to_end_from_bands(self) -> None:
+        nir_pre, red_pre = np.array([0.5, 0.5]), np.array([0.1, 0.1])
+        nir_post, red_post = np.array([0.15, 0.5]), np.array([0.2, 0.1])
+
+        ndvi_pre = compute_ndvi(nir_pre, red_pre)
+        ndvi_post = compute_ndvi(nir_post, red_post)
+        dndvi = compute_dndvi(ndvi_pre, ndvi_post)
+
+        # Pixel 0 shows real decline; pixel 1 unchanged (~0).
+        assert dndvi[0] > 0.3
+        assert dndvi[1] == pytest.approx(0.0)

@@ -1,19 +1,20 @@
 """
 Automated intelligence report generation (Phase 18/19).
 
-Ties together what GeoWatch actually has by Milestone 5: stored events
-(currently only WILDFIRE, from NASA FIRMS), and optionally a specific
-WildfireDetectionResult from imagery-based dNBR analysis (Milestone 2).
-It deliberately does NOT claim capabilities GeoWatch doesn't have yet —
-there is no vegetation-decline or land-disturbance section here, because
-those detection modules don't exist. Adding empty/fake sections for
-them would misrepresent the system, which runs directly against this
-project's own Responsible Use principle.
+Ties together stored events (currently WILDFIRE, from NASA FIRMS) with
+optional imagery-based analysis results: a WildfireDetectionResult
+(Milestone 2, dNBR-based) and/or a VegetationDeclineResult (dNDVI-based).
+Both are optional and independent — a report can include either, both,
+or neither. It deliberately does NOT claim capabilities GeoWatch doesn't
+have yet: there is still no land-disturbance or mining-related section,
+because that detection module doesn't exist. Adding an empty/fake
+section for it would misrepresent the system, which runs directly
+against this project's own Responsible Use principle.
 
 A report's `limitations` field is generated dynamically from what data
 actually went into it, not a fixed disclaimer boilerplate — a report
 built only from FIRMS events gets different limitations than one that
-also includes an imagery-based severity analysis.
+also includes a severity and/or vegetation-change analysis.
 
 Exports to JSON (primary format) and CSV (event table only). PDF export
 is a roadmap item — see README.md.
@@ -24,10 +25,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from src.detection.vegetation import VegetationDeclineResult
 from src.detection.wildfire import WildfireDetectionResult
 from src.geospatial.aoi import AOI
 from src.geospatial.area import AreaStats, compute_area_stats
@@ -76,6 +79,10 @@ class IntelligenceReport:
     severity_breakdown: Optional[dict[str, int]]
     severity_thresholds_used: Optional[dict[str, float]]
 
+    mean_ndvi_change: Optional[float]
+    vegetation_change_breakdown: Optional[dict[str, int]]
+    vegetation_change_thresholds_used: Optional[dict[str, float]]
+
     events: list[EventSummary]
     limitations: list[str]
 
@@ -117,6 +124,7 @@ def _event_to_summary(event: GeoWatchEvent) -> EventSummary:
 def _build_limitations(
     events: list[GeoWatchEvent],
     wildfire_result: Optional[WildfireDetectionResult],
+    vegetation_result: Optional[VegetationDeclineResult],
 ) -> list[str]:
     """Generate limitations text specific to what data this report actually
     contains, rather than a fixed boilerplate disclaimer."""
@@ -153,11 +161,31 @@ def _build_limitations(
             f"different reported affected area."
         )
 
+    if vegetation_result is not None:
+        t = vegetation_result.thresholds
+        limitations.append(
+            f"Vegetation-change classification uses dNDVI thresholds "
+            f"(improvement<={t.improvement_max}, stable<={t.stable_max}, "
+            f"slight_decline<={t.slight_decline_max}, moderate_decline<={t.moderate_decline_max}, "
+            f"severe_decline>{t.moderate_decline_max}) — illustrative breakpoints, "
+            f"not a validated ecological standard. What counts as significant "
+            f"vegetation decline genuinely depends on ecosystem type, season, "
+            f"and baseline variability; different thresholds would classify "
+            f"these pixels differently."
+        )
+
+    covered = ["wildfire monitoring"]
+    if vegetation_result is not None:
+        covered.append("vegetation-change analysis")
+    not_covered = [
+        item
+        for item in ["vegetation-decline", "land-disturbance", "mining-related"]
+        if not (vegetation_result is not None and item == "vegetation-decline")
+    ]
     limitations.append(
-        "This report covers only wildfire monitoring. GeoWatch does not yet "
-        "implement vegetation-decline, land-disturbance, or mining-related "
-        "detection — no claims are made about non-fire environmental change "
-        "in this AOI."
+        f"This report covers only {' and '.join(covered)}. GeoWatch does not yet "
+        f"implement {', '.join(not_covered)} detection — no claims are made "
+        f"about environmental change outside what is explicitly reported above."
     )
 
     return limitations
@@ -170,9 +198,10 @@ def generate_intelligence_report(
     events: list[GeoWatchEvent],
     wildfire_result: Optional[WildfireDetectionResult] = None,
     pixel_resolution_m: Optional[float] = None,
+    vegetation_result: Optional[VegetationDeclineResult] = None,
 ) -> IntelligenceReport:
     """Assemble an IntelligenceReport from stored events and, optionally, a
-    specific imagery-based wildfire detection result.
+    specific imagery-based wildfire detection and/or vegetation-change result.
 
     Args:
         aoi: the Area of Interest this report covers.
@@ -186,6 +215,9 @@ def generate_intelligence_report(
             imagery comparison, if one was run for this AOI/period.
         pixel_resolution_m: required if wildfire_result is provided —
             needed to convert its pixel mask into real hectares.
+        vegetation_result: optional VegetationDeclineResult (see
+            src/detection/vegetation.py) from a dNDVI-based analysis, if
+            one was run for this AOI/period.
 
     Returns:
         A complete IntelligenceReport.
@@ -235,6 +267,25 @@ def generate_intelligence_report(
             "moderate_high_max": t.moderate_high_max,
         }
 
+    mean_ndvi_change: Optional[float] = None
+    vegetation_change_breakdown: Optional[dict[str, int]] = None
+    vegetation_change_thresholds_used: Optional[dict[str, float]] = None
+
+    if vegetation_result is not None:
+        mean_ndvi_change = (
+            None
+            if math.isnan(vegetation_result.mean_ndvi_change)
+            else round(vegetation_result.mean_ndvi_change, 4)
+        )
+        vegetation_change_breakdown = vegetation_result.change_counts
+        vt = vegetation_result.thresholds
+        vegetation_change_thresholds_used = {
+            "improvement_max": vt.improvement_max,
+            "stable_max": vt.stable_max,
+            "slight_decline_max": vt.slight_decline_max,
+            "moderate_decline_max": vt.moderate_decline_max,
+        }
+
     return IntelligenceReport(
         aoi_label=aoi.label,
         aoi_bbox=aoi.as_bbox_tuple(),
@@ -250,6 +301,9 @@ def generate_intelligence_report(
         burned_area_percentage=burned_area_percentage,
         severity_breakdown=severity_breakdown,
         severity_thresholds_used=severity_thresholds_used,
+        mean_ndvi_change=mean_ndvi_change,
+        vegetation_change_breakdown=vegetation_change_breakdown,
+        vegetation_change_thresholds_used=vegetation_change_thresholds_used,
         events=[_event_to_summary(e) for e in events],
-        limitations=_build_limitations(events, wildfire_result),
+        limitations=_build_limitations(events, wildfire_result, vegetation_result),
     )
