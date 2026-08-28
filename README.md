@@ -38,7 +38,7 @@ mining-related land disturbance,"* never as a confirmed illegal
 activity. This distinction is enforced in code via the `EvidenceLevel`
 type in [`src/types.py`](src/types.py), not just described in prose.
 
-## Current status: MVP complete (Milestones 0-5) + vegetation decline engine + event time-series
+## Current status: MVP complete (Milestones 0-5) + vegetation decline engine + event time-series + real Sentinel-2 imagery
 
 This repository is being built one working, tested milestone at a
 time. **Nothing here is skipped or faked** — each milestone below is
@@ -54,29 +54,42 @@ a real, runnable checkpoint before the next one starts.
 | 5 | Automated intelligence report (JSON + CSV export) | done |
 | 6 (post-MVP) | Vegetation decline detection engine (dNDVI-based) | engine done, not yet in dashboard |
 | 7 (post-MVP) | Event time-series tracking (real FIRMS data, live in dashboard) | done |
+| 8 (post-MVP) | Sentinel-2 provider via Earth Search (real optical imagery, zero auth) | done |
 
-**The original Milestone 0-5 MVP is complete.** Post-MVP work has begun
-with a vegetation-change detection engine (`src/detection/vegetation.py`,
-`compute_dndvi()`), built and fully tested the same way every wildfire
-module was — but **not yet surfaced in the dashboard**, since GeoWatch
-has no live optical-imagery provider (Sentinel-2/Landsat) to feed it real
-data. NASA FIRMS gives fire-hotspot points, not the raw spectral bands
-vegetation analysis needs. See
-[`notebooks/06_vegetation_decline.ipynb`](notebooks/06_vegetation_decline.ipynb)
-for a full demonstration against known synthetic ground truth.
+**The original Milestone 0-5 MVP is complete.** Post-MVP work has added
+three things, each honestly scoped to what it actually does:
 
-Unlike vegetation decline, **event time-series tracking is genuinely
-live** (`src/monitoring/timeseries.py`) — it aggregates real stored
-FIRMS events by day and shows a trend chart directly in the Fire
-Monitor tab, since GeoWatch already has real event data with real
-timestamps flowing through PostGIS. The trend label is an explicitly
-simple heuristic (first-half vs second-half mean comparison), not a
-statistical test — see the module docstring before treating it as more
-than a rough signal.
+- **A vegetation-change detection engine**
+  (`src/detection/vegetation.py`, `compute_dndvi()`), built and fully
+  tested the same way every wildfire module was.
+- **Live event time-series tracking**
+  (`src/monitoring/timeseries.py`) — genuinely live, aggregating real
+  stored FIRMS events by day into a trend chart in the Fire Monitor
+  tab. The trend label is an explicitly simple heuristic (first-half
+  vs second-half mean comparison), not a statistical test — see the
+  module docstring before treating it as more than a rough signal.
+- **A real Sentinel-2 provider** (`src/ingestion/sentinel2.py`), via
+  [Earth Search](https://earth-search.aws.element84.com/v1) —
+  Element84's free, public STAC API. Unlike NASA FIRMS, this requires
+  **zero authentication** — no API key, no registration. See
+  [`notebooks/07_sentinel2_real_imagery.ipynb`](notebooks/07_sentinel2_real_imagery.ipynb),
+  which searches and reads real Sentinel-2 pixels directly if you have
+  network access (falling back to clearly-labeled synthetic data if not).
 
-Everything beyond this — Sentinel-1/SAR, a Sentinel-2 provider, machine
-learning, time-series recovery tracking, an AI explainer layer, event
-streaming — is documented **roadmap**, not current functionality. See
+**What this does and doesn't unlock yet, precisely:** the Sentinel-2
+provider can fetch real NIR/RED/SWIR pixels for any AOI right now. It
+is **not yet wired into wildfire detection, vegetation decline, or the
+dashboard** — that ingestion → detection → event → map pipeline is the
+natural next step, following the same pattern NASA FIRMS did. Until
+then, wildfire and vegetation detection remain validated against
+synthetic scenes only (see
+[`notebooks/03_wildfire_detection.ipynb`](notebooks/03_wildfire_detection.ipynb)
+and
+[`notebooks/06_vegetation_decline.ipynb`](notebooks/06_vegetation_decline.ipynb)).
+
+Everything beyond this — Sentinel-1/SAR, machine learning, time-series
+recovery tracking, an AI explainer layer, event streaming — is
+documented **roadmap**, not current functionality. See
 [Roadmap](#roadmap) below.
 
 ## Architecture
@@ -90,10 +103,12 @@ notebooks/
     04_live_fire_monitoring.ipynb  Phase 4 — FIRMS ingestion + PostGIS + map demo
     05_intelligence_report.ipynb   Phase 5 — automated report generation demo
     06_vegetation_decline.ipynb    Phase 7 — vegetation decline engine demo (post-MVP)
+    07_sentinel2_real_imagery.ipynb Phase 8 — real Sentinel-2 imagery via Earth Search (post-MVP)
 src/
     types.py             EvidenceLevel, GeoWatchEvent, ConfidenceScore — shared contracts
-    ingestion/           SatelliteDataProvider abstraction; firms.py is the first real provider
-    preprocessing/       image loading, band stacking, masking helpers
+    ingestion/           SatelliteDataProvider abstraction; firms.py (fire points) and
+                          sentinel2.py (real optical imagery, zero auth) are the two providers
+    preprocessing/       imagery.py: COG windowed reads with automatic CRS reprojection
     remote_sensing/      NDVI, NBR, spectral index calculations
     geospatial/          AOI, geometry, area calculations
     detection/           wildfire, vegetation, disturbance detection
@@ -118,7 +133,8 @@ GeoWatch prioritizes open, free Earth-observation data and avoids
 scraping — only official APIs and catalogues:
 
 - **NASA FIRMS** — near-real-time active-fire detections (free `MAP_KEY`, 5,000 requests / 10-min window). Live as of Milestone 3 via `src/ingestion/firms.py`.
-- **Copernicus Sentinel-1 / Sentinel-2** — SAR and optical imagery (planned)
+- **Sentinel-2 (via Earth Search)** — optical imagery (NIR/RED/SWIR bands). Live via `src/ingestion/sentinel2.py`; zero authentication required. Not yet wired into detection/dashboard — see status section above.
+- **Sentinel-1 SAR** — radar imagery (planned; Earth Search also hosts this collection, so a future provider would reuse the same pattern)
 - **USGS Landsat** — optical imagery (planned)
 - **OpenStreetMap** — infrastructure/context data (planned)
 

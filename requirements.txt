@@ -9,6 +9,7 @@ pytest>=8.0
 
 # --- Remote sensing / geospatial (Milestone 1-3) ---
 rasterio>=1.3
+pyproj>=3.5
 geopandas>=0.14
 shapely>=2.0
 
