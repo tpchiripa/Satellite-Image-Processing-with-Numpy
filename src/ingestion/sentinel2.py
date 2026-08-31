@@ -35,7 +35,7 @@ import requests
 
 from src.geospatial.aoi import AOI
 from src.ingestion.base import SatelliteDataProvider
-from src.preprocessing.imagery import read_band_window
+from src.preprocessing.imagery import compute_output_shape, read_band_window
 
 EARTH_SEARCH_BASE_URL = "https://earth-search.aws.element84.com/v1"
 SENTINEL2_COLLECTION = "sentinel-2-l2a"
@@ -210,13 +210,29 @@ class Sentinel2Provider(SatelliteDataProvider):
         return destination
 
     def read_scene_bands(
-        self, item: dict[str, Any], bands: list[str], aoi: AOI
+        self,
+        item: dict[str, Any],
+        bands: list[str],
+        aoi: AOI,
+        target_resolution_m: float = 10.0,
     ) -> dict[str, np.ndarray]:
         """Read only the AOI's pixels for one or more bands, directly from the COGs.
 
         This is the practical entry point for GeoWatch's detection
         pipelines — no full-file download, no local disk usage beyond
         what rasterio/GDAL buffers internally.
+
+        IMPORTANT: Sentinel-2 bands are NOT all the same native
+        resolution — RED/NIR/GREEN/BLUE are 10m, SWIR16/SWIR22 are 20m.
+        Reading two such bands independently for the identical AOI
+        returns arrays of DIFFERENT pixel dimensions, which silently
+        breaks any element-wise calculation (NDVI, NBR, ...) between
+        them. This was caught by a real live query during development,
+        not by testing alone. To prevent it, this method always
+        resamples every requested band to a single common shape at
+        target_resolution_m, computed once from the first band and
+        applied to all — so the returned arrays are always guaranteed
+        to be identically shaped, regardless of which bands were asked for.
 
         Args:
             item: a STAC item dict, as returned by search_observations()
@@ -225,35 +241,52 @@ class Sentinel2Provider(SatelliteDataProvider):
                 BAND_ASSET_KEYS), e.g. ['nir', 'red'] for NDVI, or
                 ['nir', 'swir16'] for NBR.
             aoi: the Area of Interest to read.
+            target_resolution_m: pixel resolution (in meters — Sentinel-2
+                tiles use a UTM CRS) every returned band is resampled to.
+                Defaults to 10.0, Sentinel-2's finest common optical
+                resolution, so 20m bands (like swir16) get upsampled
+                rather than 10m bands being downsampled.
 
         Returns:
             Dict mapping each requested band name to its windowed pixel
-            array (raw digital numbers — see
-            src/preprocessing/imagery.py's module docstring on
-            normalizing to reflectance).
+            array, all sharing the same (height, width) — raw digital
+            numbers (see src/preprocessing/imagery.py's module docstring
+            on normalizing to reflectance). Resampled bands come back as
+            float64 rather than the source's native integer dtype
+            (bilinear resampling is not integer-exact).
 
         Raises:
-            ValueError: if any band name is not recognized.
+            ValueError: if any band name is not recognized, or
+                target_resolution_m is not positive.
             Sentinel2Error: if the item is missing a requested asset.
-            RasterReadError: (from read_band_window) if a COG can't be
-                read or the AOI doesn't overlap it.
+            RasterReadError: if a COG can't be read or the AOI doesn't
+                overlap it.
         """
         unknown = [b for b in bands if b not in BAND_ASSET_KEYS]
         if unknown:
             raise ValueError(
                 f"read_scene_bands: unknown band(s) {unknown}. Valid options: {sorted(BAND_ASSET_KEYS)}"
             )
+        if not bands:
+            return {}
 
-        result: dict[str, np.ndarray] = {}
-        for band in bands:
+        def _href_for(band: str) -> str:
             stac_key = BAND_ASSET_KEYS[band]
             try:
-                href = item["assets"][stac_key]["href"]
+                return item["assets"][stac_key]["href"]
             except KeyError as exc:
                 item_id = item.get("id", "<unknown>")
                 raise Sentinel2Error(
                     f"Scene {item_id!r} has no {band!r} asset (STAC key {stac_key!r} not found)."
                 ) from exc
-            result[band] = read_band_window(href, aoi)
+
+        # Establish one common output shape from the first band, then apply
+        # it to every band — this is what guarantees same-shaped arrays
+        # regardless of each band's individual native resolution.
+        out_shape = compute_output_shape(_href_for(bands[0]), aoi, target_resolution_m)
+
+        result: dict[str, np.ndarray] = {}
+        for band in bands:
+            result[band] = read_band_window(_href_for(band), aoi, out_shape=out_shape)
 
         return result

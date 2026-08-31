@@ -133,3 +133,58 @@ class TestReadBandWindow:
 
         result = read_band_window(str(path), aoi, unsigned=False, fill_value=9999)
         assert 9999 in result
+
+
+class TestComputeOutputShape:
+    def test_matches_native_resolution(self, synthetic_geotiff) -> None:
+        from src.preprocessing.imagery import compute_output_shape
+
+        path, transform, size, resolution = synthetic_geotiff
+        aoi = _aoi_for_utm_window(transform, resolution, size, col0=0, col1=size, row0=0, row1=size)
+
+        out_shape = compute_output_shape(str(path), aoi, target_resolution_m=resolution, unsigned=False)
+        assert out_shape[0] == pytest.approx(size, abs=1)
+        assert out_shape[1] == pytest.approx(size, abs=1)
+
+    def test_finer_target_resolution_gives_more_pixels(self, synthetic_geotiff) -> None:
+        from src.preprocessing.imagery import compute_output_shape
+
+        path, transform, size, resolution = synthetic_geotiff
+        aoi = _aoi_for_utm_window(transform, resolution, size, col0=0, col1=size, row0=0, row1=size)
+
+        coarse_shape = compute_output_shape(str(path), aoi, target_resolution_m=20.0, unsigned=False)
+        fine_shape = compute_output_shape(str(path), aoi, target_resolution_m=5.0, unsigned=False)
+        assert fine_shape[0] > coarse_shape[0]
+        assert fine_shape[1] > coarse_shape[1]
+
+    def test_nonpositive_resolution_raises(self, synthetic_geotiff) -> None:
+        from src.preprocessing.imagery import compute_output_shape
+
+        path, transform, size, resolution = synthetic_geotiff
+        aoi = _aoi_for_utm_window(transform, resolution, size, col0=0, col1=size, row0=0, row1=size)
+        with pytest.raises(ValueError):
+            compute_output_shape(str(path), aoi, target_resolution_m=0.0, unsigned=False)
+
+    def test_nonexistent_file_raises(self) -> None:
+        from src.preprocessing.imagery import compute_output_shape
+
+        aoi = AOI(label="test", west=10.0, south=-20.0, east=11.0, north=-19.0)
+        with pytest.raises(RasterReadError):
+            compute_output_shape("/nonexistent/file.tif", aoi, target_resolution_m=10.0, unsigned=False)
+
+
+class TestReadBandWindowWithOutShape:
+    def test_out_shape_resamples_to_requested_dimensions(self, synthetic_geotiff) -> None:
+        path, transform, size, resolution = synthetic_geotiff
+        aoi = _aoi_for_utm_window(transform, resolution, size, col0=0, col1=size, row0=0, row1=size)
+
+        result = read_band_window(str(path), aoi, unsigned=False, out_shape=(25, 25))
+        assert result.shape == (25, 25)
+
+    def test_out_shape_none_preserves_native_resolution_behavior(self, synthetic_geotiff) -> None:
+        # Confirms the fix didn't change default (no out_shape) behavior.
+        path, transform, size, resolution = synthetic_geotiff
+        aoi = _aoi_for_utm_window(transform, resolution, size, col0=0, col1=size, row0=0, row1=size)
+
+        result = read_band_window(str(path), aoi, unsigned=False)
+        assert result.shape[0] == pytest.approx(size, abs=1)

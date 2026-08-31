@@ -20,9 +20,12 @@ so the typical pipeline is:
 
 from __future__ import annotations
 
+from typing import Optional
+
 import numpy as np
 import rasterio
 import rasterio.windows
+from rasterio.enums import Resampling
 from rasterio.errors import RasterioIOError
 from rasterio.warp import transform_bounds
 
@@ -38,6 +41,7 @@ def read_band_window(
     aoi: AOI,
     unsigned: bool = True,
     fill_value: float = 0.0,
+    out_shape: Optional[tuple[int, int]] = None,
 ) -> np.ndarray:
     """Read the pixels of a COG that fall within an AOI, reprojecting as needed.
 
@@ -59,11 +63,24 @@ def read_band_window(
             Defaults to 0, consistent with the nodata convention already
             used by normalize_band()/mask_invalid_pixels() elsewhere in
             GeoWatch.
+        out_shape: if given, (height, width) to resample the read window
+            to, using bilinear resampling. Needed whenever multiple
+            bands at DIFFERENT NATIVE RESOLUTIONS are read for the same
+            AOI and must come back as same-shaped arrays — e.g.
+            Sentinel-2's 10m RED/NIR vs 20m SWIR16. Without this, two
+            bands covering the identical AOI can return different pixel
+            dimensions, which breaks any element-wise calculation
+            (NDVI, NBR, ...) between them. This exact mismatch was
+            caught by a real live Sentinel-2 query during development —
+            see src/ingestion/sentinel2.py's read_scene_bands(), which
+            computes and applies a single out_shape across all
+            requested bands for exactly this reason.
 
     Returns:
         2D ndarray of raw digital numbers (native dtype of the source
-        band — typically uint16 for Sentinel-2 L2A). Callers normalize
-        to reflectance separately (see module docstring).
+        band — typically uint16 for Sentinel-2 L2A, or float32/float64
+        if resampled via out_shape). Callers normalize to reflectance
+        separately (see module docstring).
 
     Raises:
         RasterReadError: if the file can't be opened, or the AOI does
@@ -97,12 +114,63 @@ def read_band_window(
                 window = rasterio.windows.from_bounds(
                     west, south, east, north, transform=src.transform
                 )
-                data = src.read(
-                    1,
-                    window=window,
-                    boundless=True,
-                    fill_value=fill_value,
-                )
+                read_kwargs: dict = dict(window=window, boundless=True, fill_value=fill_value)
+                if out_shape is not None:
+                    read_kwargs["out_shape"] = out_shape
+                    read_kwargs["resampling"] = Resampling.bilinear
+                data = src.read(1, **read_kwargs)
         return data
     except RasterioIOError as exc:
         raise RasterReadError(f"read_band_window: could not open {asset_href!r}: {exc}") from exc
+
+
+def compute_output_shape(
+    asset_href: str, aoi: AOI, target_resolution_m: float, unsigned: bool = True
+) -> tuple[int, int]:
+    """Compute the (height, width) an AOI window would have at a given resolution.
+
+    Used to establish a single common shape before reading multiple
+    bands at different native resolutions (see read_band_window's
+    out_shape parameter) — open one reference band, compute its window
+    size in meters (valid since satellite COGs use a projected CRS,
+    typically UTM), then convert to pixel counts at the target
+    resolution.
+
+    Args:
+        asset_href: URL of a COG to use as the CRS/geometry reference.
+            Any band asset for the same scene works — Sentinel-2's
+            bands share a common tile CRS regardless of their
+            individual native resolution.
+        aoi: Area of Interest, in WGS84 lat/lon.
+        target_resolution_m: desired pixel resolution, in the raster
+            CRS's linear units (meters, for the UTM projections
+            satellite COGs typically use).
+        unsigned: as in read_band_window().
+
+    Returns:
+        (height, width) in pixels.
+
+    Raises:
+        RasterReadError: if the reference file can't be opened.
+        ValueError: if target_resolution_m is not positive.
+    """
+    if target_resolution_m <= 0:
+        raise ValueError(
+            f"compute_output_shape: target_resolution_m must be positive, got {target_resolution_m}"
+        )
+
+    env_options = {"AWS_NO_SIGN_REQUEST": "YES"} if unsigned else {}
+    try:
+        with rasterio.Env(**env_options):
+            with rasterio.open(asset_href) as src:
+                west, south, east, north = transform_bounds(
+                    "EPSG:4326", src.crs, aoi.west, aoi.south, aoi.east, aoi.north
+                )
+    except RasterioIOError as exc:
+        raise RasterReadError(f"compute_output_shape: could not open {asset_href!r}: {exc}") from exc
+
+    width_m = east - west
+    height_m = north - south
+    out_width = max(1, round(width_m / target_resolution_m))
+    out_height = max(1, round(height_m / target_resolution_m))
+    return (out_height, out_width)

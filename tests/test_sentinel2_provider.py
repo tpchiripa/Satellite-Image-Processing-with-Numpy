@@ -278,6 +278,117 @@ class TestReadSceneBands:
         assert bands["red"].mean() == pytest.approx(800, abs=1)
         assert bands["nir"].mean() == pytest.approx(3000, abs=1)
 
+    def test_mixed_resolution_bands_return_identical_shapes(self, tmp_path) -> None:
+        # Regression test for a real bug caught by a live Sentinel-2 query:
+        # RED/NIR are natively 10m, SWIR16 is natively 20m. Reading the
+        # identical AOI from each independently used to return arrays of
+        # DIFFERENT pixel dimensions (a 2x mismatch), which broke
+        # compute_nbr()'s shape check. read_scene_bands() must resample
+        # every band to a single common shape.
+        origin_x, origin_y = 500_000.0, 7_800_000.0
+        aoi_size_m = 500.0  # 500m x 500m AOI
+
+        # RED and NIR: 10m native resolution -> 50x50 pixels over the AOI.
+        red_path = tmp_path / "red_10m.tif"
+        nir_path = tmp_path / "nir_10m.tif"
+        fine_size = int(aoi_size_m / 10.0)
+        fine_transform = from_origin(origin_x, origin_y, 10.0, 10.0)
+        for path, fill_value in [(red_path, 800), (nir_path, 3000)]:
+            with rasterio.open(
+                path, "w", driver="GTiff", height=fine_size, width=fine_size, count=1,
+                dtype=np.uint16, crs="EPSG:32735", transform=fine_transform,
+            ) as dst:
+                dst.write(np.full((fine_size, fine_size), fill_value, dtype=np.uint16), 1)
+
+        # SWIR16: 20m native resolution -> only 25x25 pixels over the SAME
+        # real-world AOI. This is the actual source of the bug.
+        swir_path = tmp_path / "swir16_20m.tif"
+        coarse_size = int(aoi_size_m / 20.0)
+        coarse_transform = from_origin(origin_x, origin_y, 20.0, 20.0)
+        with rasterio.open(
+            swir_path, "w", driver="GTiff", height=coarse_size, width=coarse_size, count=1,
+            dtype=np.uint16, crs="EPSG:32735", transform=coarse_transform,
+        ) as dst:
+            dst.write(np.full((coarse_size, coarse_size), 1400, dtype=np.uint16), 1)
+
+        assert fine_size != coarse_size  # sanity check the test setup itself is valid
+
+        import pyproj
+
+        utm_to_wgs84 = pyproj.Transformer.from_crs("EPSG:32735", "EPSG:4326", always_xy=True)
+        lon_w, lat_s = utm_to_wgs84.transform(origin_x, origin_y - aoi_size_m)
+        lon_e, lat_n = utm_to_wgs84.transform(origin_x + aoi_size_m, origin_y)
+        aoi = AOI(label="mixed resolution test", west=lon_w, south=lat_s, east=lon_e, north=lat_n)
+
+        item = {
+            "id": "mixed-res-test-item",
+            "assets": {
+                "red": {"href": str(red_path)},
+                "nir": {"href": str(nir_path)},
+                "swir16": {"href": str(swir_path)},
+            },
+        }
+
+        provider = Sentinel2Provider(session=MagicMock())
+        bands = provider.read_scene_bands(item, ["red", "nir", "swir16"], aoi, target_resolution_m=10.0)
+
+        # The whole point of the fix: all three must come back identically shaped,
+        # even though swir16's source file has half the pixel dimensions of red/nir.
+        assert bands["red"].shape == bands["nir"].shape == bands["swir16"].shape
+
+        # And the values should still be sane after resampling.
+        assert bands["red"].mean() == pytest.approx(800, abs=5)
+        assert bands["nir"].mean() == pytest.approx(3000, abs=5)
+        assert bands["swir16"].mean() == pytest.approx(1400, abs=5)
+
+    def test_downstream_nbr_calculation_works_after_fix(self, tmp_path) -> None:
+        # The actual failure mode from the live bug report: compute_nbr()
+        # raising a shape-mismatch ValueError. Confirm the full real pipeline
+        # (read_scene_bands -> normalize_band -> compute_nbr) now succeeds.
+        from src.remote_sensing.nbr import compute_nbr
+        from src.remote_sensing.spectral import normalize_band
+
+        origin_x, origin_y = 500_000.0, 7_800_000.0
+        aoi_size_m = 300.0
+
+        nir_path = tmp_path / "nir.tif"
+        fine_size = int(aoi_size_m / 10.0)
+        with rasterio.open(
+            nir_path, "w", driver="GTiff", height=fine_size, width=fine_size, count=1,
+            dtype=np.uint16, crs="EPSG:32735", transform=from_origin(origin_x, origin_y, 10.0, 10.0),
+        ) as dst:
+            dst.write(np.full((fine_size, fine_size), 3200, dtype=np.uint16), 1)
+
+        swir_path = tmp_path / "swir16.tif"
+        coarse_size = int(aoi_size_m / 20.0)
+        with rasterio.open(
+            swir_path, "w", driver="GTiff", height=coarse_size, width=coarse_size, count=1,
+            dtype=np.uint16, crs="EPSG:32735", transform=from_origin(origin_x, origin_y, 20.0, 20.0),
+        ) as dst:
+            dst.write(np.full((coarse_size, coarse_size), 1400, dtype=np.uint16), 1)
+
+        import pyproj
+
+        utm_to_wgs84 = pyproj.Transformer.from_crs("EPSG:32735", "EPSG:4326", always_xy=True)
+        lon_w, lat_s = utm_to_wgs84.transform(origin_x, origin_y - aoi_size_m)
+        lon_e, lat_n = utm_to_wgs84.transform(origin_x + aoi_size_m, origin_y)
+        aoi = AOI(label="nbr pipeline test", west=lon_w, south=lat_s, east=lon_e, north=lat_n)
+
+        item = {
+            "id": "nbr-pipeline-test",
+            "assets": {"nir": {"href": str(nir_path)}, "swir16": {"href": str(swir_path)}},
+        }
+
+        provider = Sentinel2Provider(session=MagicMock())
+        bands = provider.read_scene_bands(item, ["nir", "swir16"], aoi)
+
+        nir = normalize_band(bands["nir"])
+        swir16 = normalize_band(bands["swir16"])
+        nbr = compute_nbr(nir, swir16)  # this line is exactly what raised ValueError before the fix
+
+        assert nbr.shape == bands["nir"].shape
+        assert not np.all(np.isnan(nbr))
+
 
 class TestBandAssetKeys:
     def test_covers_bands_needed_for_ndvi_and_nbr(self) -> None:
