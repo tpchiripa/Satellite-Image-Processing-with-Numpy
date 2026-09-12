@@ -20,6 +20,8 @@ so the typical pipeline is:
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -30,6 +32,31 @@ from rasterio.errors import RasterioIOError
 from rasterio.warp import transform_bounds
 
 from src.geospatial.aoi import AOI
+
+# Force rasterio to use its OWN bundled PROJ coordinate-system database,
+# rather than whatever PROJ_LIB/PROJ_DATA happens to be set system-wide.
+#
+# This fixes a specific, real, and apparently common conflict: a native
+# PostgreSQL/PostGIS install on Windows sets PROJ_LIB globally, pointing
+# at ITS OWN (often older) proj.db. Since PROJ/GDAL read PROJ_LIB from
+# the environment at call time, this silently overrides rasterio's own
+# correctly-versioned proj_data — producing errors like:
+#
+#   rasterio.errors.CRSError: The EPSG code is unknown. PROJ:
+#   proj_create_from_database: ...postgis-.../proj/proj.db contains
+#   DATABASE.LAYOUT.VERSION.MINOR = 2 whereas a number >= 6 is expected.
+#
+# Setting these here, at import time and unconditionally, ensures every
+# rasterio.open() call in this module uses a proj.db version rasterio
+# itself was built and tested against — regardless of what else is
+# installed on the machine. This must happen before any rasterio.open()
+# call; import order alone is not sufficient if some other module opens
+# a raster first, which is why this sits directly in the module that
+# does all of GeoWatch's actual raster I/O.
+_rasterio_proj_data = Path(rasterio.__file__).parent / "proj_data"
+if _rasterio_proj_data.exists():
+    os.environ["PROJ_LIB"] = str(_rasterio_proj_data)
+    os.environ["PROJ_DATA"] = str(_rasterio_proj_data)
 
 
 class RasterReadError(Exception):
