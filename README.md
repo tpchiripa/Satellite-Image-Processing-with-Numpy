@@ -38,7 +38,7 @@ mining-related land disturbance,"* never as a confirmed illegal
 activity. This distinction is enforced in code via the `EvidenceLevel`
 type in [`src/types.py`](src/types.py), not just described in prose.
 
-## Current status: MVP complete (Milestones 0-5) + vegetation decline engine + event time-series + real Sentinel-2 imagery
+## Current status: MVP complete (Milestones 0-5) + vegetation decline engine + event time-series + real Sentinel-2 imagery + live Sentinel-2 wildfire detection
 
 This repository is being built one working, tested milestone at a
 time. **Nothing here is skipped or faked** — each milestone below is
@@ -55,6 +55,7 @@ a real, runnable checkpoint before the next one starts.
 | 6 (post-MVP) | Vegetation decline detection engine (dNDVI-based) | engine done, not yet in dashboard |
 | 7 (post-MVP) | Event time-series tracking (real FIRMS data, live in dashboard) | done |
 | 8 (post-MVP) | Sentinel-2 provider via Earth Search (real optical imagery, zero auth) | done |
+| 9 (post-MVP) | Sentinel-2 -> wildfire detection -> event -> live map pipeline | done |
 
 **The original Milestone 0-5 MVP is complete.** Post-MVP work has added
 three things, each honestly scoped to what it actually does:
@@ -76,16 +77,24 @@ three things, each honestly scoped to what it actually does:
   which searches and reads real Sentinel-2 pixels directly if you have
   network access (falling back to clearly-labeled synthetic data if not).
 
-**What this does and doesn't unlock yet, precisely:** the Sentinel-2
-provider can fetch real NIR/RED/SWIR pixels for any AOI right now. It
-is **not yet wired into wildfire detection, vegetation decline, or the
-dashboard** — that ingestion → detection → event → map pipeline is the
-natural next step, following the same pattern NASA FIRMS did. Until
-then, wildfire and vegetation detection remain validated against
-synthetic scenes only (see
-[`notebooks/03_wildfire_detection.ipynb`](notebooks/03_wildfire_detection.ipynb)
-and
-[`notebooks/06_vegetation_decline.ipynb`](notebooks/06_vegetation_decline.ipynb)).
+**What this does and doesn't unlock, precisely:** the Sentinel-2
+provider is now wired into a real end-to-end pipeline — search for a
+pre-fire and post-fire scene, read NIR/SWIR16 bands directly from the
+COGs, compute dNBR, run burned-area detection
+(`src/detection/wildfire.py`), cluster the result into geolocated
+events (`src/detection/wildfire_events.py`), and store them in
+PostGIS — all runnable from the dashboard's **Wildfire (Sentinel-2)**
+tab, no API key required. This closes the loop the Fire Monitor tab
+already established for point-based FIRMS detections, but for
+imagery-derived burned-area regions instead.
+
+**Vegetation decline is not yet part of this live pipeline** — the
+engine exists and is fully tested (`src/detection/vegetation.py`), but
+nothing yet converts a `VegetationDeclineResult` into map events the
+way `wildfire_result_to_events()` now does for fire. That's the
+natural next piece. See
+[`notebooks/06_vegetation_decline.ipynb`](notebooks/06_vegetation_decline.ipynb)
+for the validated-but-not-yet-live engine.
 
 Everything beyond this — Sentinel-1/SAR, machine learning, time-series
 recovery tracking, an AI explainer layer, event streaming — is
@@ -197,7 +206,7 @@ streamlit run app/dashboard.py
 Works with zero configuration (falls back to an in-memory store and an
 empty state with setup instructions), but is more useful with both
 `DATABASE_URL` and `FIRMS_MAP_KEY` set — persistence plus live fire
-data. Three tabs: Overview, Live Event Map, Fire Monitor.
+data. Four tabs: Overview, Live Event Map, Fire Monitor, Wildfire (Sentinel-2).
 
 ## Responsible use
 

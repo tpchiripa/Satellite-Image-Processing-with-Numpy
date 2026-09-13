@@ -78,10 +78,10 @@ class TestDashboardWithoutDatabase:
         backend_metric = next(m for m in at.metric if m.label == "Storage backend")
         assert "In-memory" in backend_metric.value
 
-    def test_has_three_tabs(self) -> None:
+    def test_has_four_tabs(self) -> None:
         at = AppTest.from_file(str(DASHBOARD_PATH))
         at.run(timeout=30)
-        assert len(at.tabs) == 3
+        assert len(at.tabs) == 4
 
     def test_empty_state_messaging_shown(self) -> None:
         at = AppTest.from_file(str(DASHBOARD_PATH))
@@ -202,3 +202,87 @@ class TestDashboardWithDatabase:
         assert not at.exception
         captions = [c.value for c in at.caption]
         assert any("nothing to chart yet" in c for c in captions)
+
+    def test_sentinel2_wildfire_detection_end_to_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABASE_URL", TEST_DB_URL)
+
+        import numpy as np
+
+        PRE_SCENE = {
+            "id": "S2_TEST_PRE",
+            "properties": {"datetime": "2025-01-01T10:00:00Z", "eo:cloud_cover": 5.0},
+            "assets": {},
+        }
+        POST_SCENE = {
+            "id": "S2_TEST_POST",
+            "properties": {"datetime": "2025-03-01T10:00:00Z", "eo:cloud_cover": 8.0},
+            "assets": {},
+        }
+
+        healthy_bands = {"nir": np.full((10, 10), 3000, dtype=np.uint16), "swir16": np.full((10, 10), 1500, dtype=np.uint16)}
+        burned_bands = {"nir": np.full((10, 10), 1000, dtype=np.uint16), "swir16": np.full((10, 10), 3500, dtype=np.uint16)}
+
+        with (
+            patch(
+                "src.ingestion.sentinel2.Sentinel2Provider.search_observations",
+                side_effect=[[PRE_SCENE], [POST_SCENE]],
+            ),
+            patch(
+                "src.ingestion.sentinel2.Sentinel2Provider.read_scene_bands",
+                side_effect=[healthy_bands, burned_bands],
+            ),
+        ):
+            at = AppTest.from_file(str(DASHBOARD_PATH))
+            at.run(timeout=30)
+            run_button = next(b for b in at.button if "Run Sentinel-2 wildfire detection" in b.label)
+            run_button.click().run(timeout=30)
+
+        assert not at.exception
+        # The success message is transient -- st.rerun() at the end of a
+        # successful run wipes it, same reason test_fetch_button_stores_
+        # real_event_in_postgis checks persisted state rather than the
+        # NASA FIRMS fetch's own success message. Check what actually
+        # persists: the stored-detections caption on this tab.
+        captions = [c.value for c in at.caption]
+        assert any("stored Sentinel-2-derived detection" in c for c in captions)
+
+    def test_sentinel2_no_scenes_found_shows_warning_not_crash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABASE_URL", TEST_DB_URL)
+
+        with patch("src.ingestion.sentinel2.Sentinel2Provider.search_observations", return_value=[]):
+            at = AppTest.from_file(str(DASHBOARD_PATH))
+            at.run(timeout=30)
+            run_button = next(b for b in at.button if "Run Sentinel-2 wildfire detection" in b.label)
+            run_button.click().run(timeout=30)
+
+        assert not at.exception
+        warnings = [w.value for w in at.warning]
+        assert any("No pre-fire scene found" in w for w in warnings)
+
+    def test_sentinel2_error_shown_gracefully(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABASE_URL", TEST_DB_URL)
+
+        from src.ingestion.sentinel2 import Sentinel2Error
+
+        with patch(
+            "src.ingestion.sentinel2.Sentinel2Provider.search_observations",
+            side_effect=Sentinel2Error("simulated network failure"),
+        ):
+            at = AppTest.from_file(str(DASHBOARD_PATH))
+            at.run(timeout=30)
+            run_button = next(b for b in at.button if "Run Sentinel-2 wildfire detection" in b.label)
+            run_button.click().run(timeout=30)
+
+        assert not at.exception
+        errors = [e.value for e in at.error]
+        assert any("Sentinel-2 wildfire detection failed" in e for e in errors)
+
+    def test_no_sentinel2_events_shows_empty_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DATABASE_URL", TEST_DB_URL)
+
+        at = AppTest.from_file(str(DASHBOARD_PATH))
+        at.run(timeout=30)
+
+        assert not at.exception
+        infos = [i.value for i in at.info]
+        assert any("No Sentinel-2-derived wildfire detections stored yet" in i for i in infos)

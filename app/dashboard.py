@@ -44,12 +44,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
-from src.detection.wildfire import BurnSeverity
+from src.detection.wildfire import BurnSeverity, detect_wildfire
+from src.detection.wildfire_events import wildfire_result_to_events
 from src.geospatial.aoi import AOI
 from src.ingestion.firms import FIRMSError, FIRMSProvider
+from src.ingestion.sentinel2 import Sentinel2Error, Sentinel2Provider
 from src.monitoring.events import InMemoryEventStore
 from src.monitoring.map_view import build_event_map
 from src.monitoring.timeseries import TrendDirection, analyze_event_time_series
+from src.preprocessing.imagery import RasterReadError
+from src.remote_sensing.nbr import compute_dnbr, compute_nbr
+from src.remote_sensing.spectral import normalize_band
 from src.reporting.reports import generate_intelligence_report
 from src.types import EventType, GeoWatchEvent
 
@@ -339,6 +344,142 @@ def render_fire_monitor_tab(store) -> None:
         st.caption("All observations fall on a single day — nothing to chart yet.")
 
 
+def render_sentinel2_wildfire_tab(store) -> None:
+    st.subheader("Wildfire detection from Sentinel-2 imagery")
+    st.caption(
+        "Pulls a pre-fire and a post-fire Sentinel-2 scene, computes dNBR, runs "
+        "burned-area detection, and stores the results as real map events — the "
+        "same pipeline validated in notebooks/03 and 07, run here end to end "
+        "against live imagery. Requires no API key (Earth Search is public)."
+    )
+
+    with st.expander("Run detection", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Pre-fire period** (baseline)")
+            pre_start = st.date_input(
+                "Start", value=datetime.now(timezone.utc).date() - timedelta(days=120), key="pre_start"
+            )
+            pre_end = st.date_input(
+                "End", value=datetime.now(timezone.utc).date() - timedelta(days=60), key="pre_end"
+            )
+        with col2:
+            st.markdown("**Post-fire period** (recent)")
+            post_start = st.date_input(
+                "Start", value=datetime.now(timezone.utc).date() - timedelta(days=30), key="post_start"
+            )
+            post_end = st.date_input("End", value=datetime.now(timezone.utc).date(), key="post_end")
+
+        max_cloud = st.slider("Maximum cloud cover (%)", 0, 100, 30)
+        run_clicked = st.button("Run Sentinel-2 wildfire detection", type="primary")
+
+    if run_clicked:
+        _run_sentinel2_wildfire_detection(store, pre_start, pre_end, post_start, post_end, max_cloud)
+
+    wildfire_events = [
+        e for e in store.list_events()
+        if e.event_type == EventType.WILDFIRE and e.source.startswith("Sentinel-2")
+    ]
+    if not wildfire_events:
+        st.info("No Sentinel-2-derived wildfire detections stored yet.")
+        return
+
+    st.caption(f"{len(wildfire_events)} stored Sentinel-2-derived detection(s).")
+    table_rows = [
+        {
+            "Detected (UTC)": (e.observation_time or e.detected_at).strftime("%Y-%m-%d %H:%M"),
+            "Latitude": round(e.latitude, 4),
+            "Longitude": round(e.longitude, 4),
+            "Severity": e.severity,
+            "Area (ha)": e.metadata.get("area_hectares"),
+            "Confidence": round(e.confidence.value, 2),
+            "Source": e.source,
+        }
+        for e in wildfire_events
+    ]
+    st.dataframe(table_rows, width="stretch", hide_index=True)
+
+
+def _run_sentinel2_wildfire_detection(store, pre_start, pre_end, post_start, post_end, max_cloud: int) -> None:
+    aoi = DEFAULT_AOI
+    provider = Sentinel2Provider()
+
+    def _to_utc_datetime(d) -> datetime:
+        return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+
+    try:
+        with st.spinner("Searching for Sentinel-2 scenes..."):
+            pre_scenes = provider.search_observations(
+                bbox=aoi.as_bbox_tuple(),
+                start_date=_to_utc_datetime(pre_start),
+                end_date=_to_utc_datetime(pre_end) + timedelta(days=1),
+                max_cloud_cover=float(max_cloud),
+            )
+            post_scenes = provider.search_observations(
+                bbox=aoi.as_bbox_tuple(),
+                start_date=_to_utc_datetime(post_start),
+                end_date=_to_utc_datetime(post_end) + timedelta(days=1),
+                max_cloud_cover=float(max_cloud),
+            )
+
+        if not pre_scenes:
+            st.warning("No pre-fire scene found in that period/cloud-cover range. Try widening the dates.")
+            return
+        if not post_scenes:
+            st.warning("No post-fire scene found in that period/cloud-cover range. Try widening the dates.")
+            return
+
+        pre_scene = min(pre_scenes, key=lambda s: s["properties"].get("eo:cloud_cover", 100.0))
+        post_scene = min(post_scenes, key=lambda s: s["properties"].get("eo:cloud_cover", 100.0))
+
+        with st.spinner(f"Reading bands from {pre_scene['id']} and {post_scene['id']}..."):
+            pre_bands = provider.read_scene_bands(pre_scene, ["nir", "swir16"], aoi)
+            post_bands = provider.read_scene_bands(post_scene, ["nir", "swir16"], aoi)
+
+        nbr_pre = compute_nbr(normalize_band(pre_bands["nir"]), normalize_band(pre_bands["swir16"]))
+        nbr_post = compute_nbr(normalize_band(post_bands["nir"]), normalize_band(post_bands["swir16"]))
+        dnbr = compute_dnbr(nbr_pre, nbr_post)
+        result = detect_wildfire(dnbr)
+
+        post_datetime_str = post_scene["properties"]["datetime"].replace("Z", "+00:00")
+        observation_time = datetime.fromisoformat(post_datetime_str)
+
+        events = wildfire_result_to_events(
+            result,
+            dnbr,
+            aoi,
+            observation_time,
+            source=f"Sentinel-2 (scene {post_scene['id']})",
+            pixel_resolution_m=10.0,
+        )
+
+        added = 0
+        for event in events:
+            try:
+                store.add_event(event)
+                added += 1
+            except ValueError:
+                pass  # already stored from a previous run
+
+        if events:
+            st.success(
+                f"Detected {len(events)} burned region(s) ({added} new). "
+                f"Pre-fire scene: {pre_scene['id']} (cloud cover "
+                f"{pre_scene['properties'].get('eo:cloud_cover', '?')}%). "
+                f"Post-fire scene: {post_scene['id']} (cloud cover "
+                f"{post_scene['properties'].get('eo:cloud_cover', '?')}%)."
+            )
+        else:
+            st.info(
+                f"No burned regions detected between {pre_scene['id']} and "
+                f"{post_scene['id']} for this AOI."
+            )
+        st.rerun()
+
+    except (Sentinel2Error, RasterReadError, ValueError) as exc:
+        st.error(f"Sentinel-2 wildfire detection failed: {exc}")
+
+
 # --- Entry point ---------------------------------------------------------
 
 
@@ -349,13 +490,17 @@ def main() -> None:
 
     store, db_connected = get_event_store(os.environ.get("DATABASE_URL"))
 
-    tab_overview, tab_map, tab_fire = st.tabs(["Overview", "Live Event Map", "Fire Monitor"])
+    tab_overview, tab_map, tab_fire, tab_sentinel2 = st.tabs(
+        ["Overview", "Live Event Map", "Fire Monitor", "Wildfire (Sentinel-2)"]
+    )
     with tab_overview:
         render_overview_tab(store, db_connected)
     with tab_map:
         render_live_map_tab(store)
     with tab_fire:
         render_fire_monitor_tab(store)
+    with tab_sentinel2:
+        render_sentinel2_wildfire_tab(store)
 
 
 if __name__ == "__main__":
